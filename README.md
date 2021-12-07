@@ -13,3 +13,4 @@ Repository to store all my (Soumya Banerjee) paper preprints.
 
 * https://sites.google.com/site/neelsoumya/publications
 
+* https://scholar.harvard.edu/sbanerjee/publications
