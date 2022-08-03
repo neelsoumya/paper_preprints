@@ -1,5 +1,7 @@
 # README #
 
+## Introduction
+
 Repository to store all my (Soumya Banerjee) paper preprints.
 
 
@@ -16,3 +18,10 @@ Repository to store all my (Soumya Banerjee) paper preprints.
 * https://scholar.google.com/citations?user=WQwMsyQAAAAJ&hl=en
 
 * https://scholar.harvard.edu/sbanerjee/publications
+
+
+## Files
+
+bib file 
+
+https://github.com/neelsoumya/paper_preprints/blob/master/all_my_papers_ref.bib
