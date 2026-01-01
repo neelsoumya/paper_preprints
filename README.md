@@ -4,6 +4,10 @@
 
 Repository to store all my (Soumya Banerjee) paper preprints.
 
+Also display publications in user friendly format from bib file
+
+http://neelsoumya.github.io/paper_preprints
+
 
 * https://osf.io/cyjtg/
 
