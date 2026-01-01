@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Publications</title>
+<style>
+  :root { --bg:#f7f8fb; --card:#fff; --muted:#6b7280; --accent:#2563eb; --radius:12px; font-family:system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial; }
+  body { margin:0; background:var(--bg); color:#0f172a; padding:28px; line-height:1.45 }
+  .wrap { max-width:980px; margin:0 auto; }
+  header { display:flex; gap:18px; align-items:center; margin-bottom:18px; }
+  h1 { margin:0; font-size:1.4rem; }
+  .controls { margin-left:auto; display:flex; gap:8px; align-items:center; }
+  input[type="search"] { padding:8px 12px; border-radius:10px; border:1px solid #e6e9ef; min-width:220px; }
+  select { padding:8px 10px; border-radius:10px; border:1px solid #e6e9ef; }
+  .card { background:var(--card); border-radius:var(--radius); padding:18px; box-shadow:0 6px 18px rgba(12,20,40,0.06); margin-bottom:14px; }
+  .year { display:flex; align-items:baseline; gap:12px; margin:18px 0 8px; }
+  .year h2 { margin:0; font-size:1.1rem; }
+  .entry { padding:12px; border-radius:10px; border:1px solid #eef2fb; margin-bottom:10px; }
+  .entry .title { font-weight:600; margin-bottom:6px; }
+  .meta { color:var(--muted); font-size:0.9rem; margin-bottom:6px; }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; }
+  button.link { background:transparent; color:var(--accent); border:none; cursor:pointer; padding:6px 8px; border-radius:8px; }
+  .small { font-size:0.85rem; color:#374151; }
+  footer { margin-top:20px; color:var(--muted); font-size:0.9rem; text-align:center; }
+  @media (max-width:640px){ header{flex-direction:column;align-items:flex-start} .controls{margin-left:0;width:100%;justify-content:space-between} }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>My Publications</h1>
+        <div class="small">Loaded from <code>refs.bib</code></div>
+      </div>
+
+      <div class="controls">
+        <input id="search" type="search" placeholder="Search title/author/journal..." />
+        <select id="sort">
+          <option value="year_desc">Sort: Year ↓</option>
+          <option value="year_asc">Sort: Year ↑</option>
+          <option value="title_asc">Sort: Title A–Z</option>
+        </select>
+        <button id="refresh" class="link">Refresh</button>
+      </div>
+    </header>
+
+    <main id="content" class="card">
+      <div id="loading" class="small">Loading citations...</div>
+    </main>
+
+    <footer>
+      Static page generated client-side. Host on GitHub Pages by placing <code>index.html</code> and <code>refs.bib</code> in the repo root.
+    </footer>
+  </div>
+
+<script>
+/* ---------- BibTeX parser (simple, robust for common BibTeX) ---------- */
+
+function extractBibEntries(text) {
+  const entries = [];
+  let i = 0, n = text.length;
+  while (i < n) {
+    const at = text.indexOf('@', i);
+    if (at === -1) break;
+    // find first '{' after @
+    const brace = text.indexOf('{', at);
+    if (brace === -1) break;
+    // find matching closing brace position by counting braces (handles nested braces)
+    let depth = 0, j = brace;
+    let inString = false;
+    while (j < n) {
+      const ch = text[j];
+      if (ch === '"' && text[j-1] !== '\\') inString = !inString;
+      if (!inString) {
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+          depth--;
+          if (depth === 0) { j++; break; }
+        }
+      }
+      j++;
+    }
+    if (j > brace) {
+      const block = text.slice(at, j).trim();
+      entries.push(block);
+      i = j;
+    } else break;
+  }
+  return entries;
+}
+
+function parseEntry(entryText) {
+  // entryText starts with @type{key, ...}
+  const m = entryText.match(/^@(\w+)\s*{\s*([^,]+),/s);
+  if (!m) return null;
+  const type = m[1].toLowerCase();
+  const key = m[2].trim();
+  // content between first comma after key and the final }
+  const bodyStart = entryText.indexOf(',', entryText.indexOf('{')+1) + 1;
+  const body = entryText.slice(bodyStart, entryText.lastIndexOf('}')).trim();
+
+  // parse fields: name = value, where value can be "..." or {...} or bareword
+  const fields = {};
+  let i = 0;
+  while (i < body.length) {
+    // skip whitespace and commas
+    while (i < body.length && (body[i] === ',' || /\s/.test(body[i]))) i++;
+    if (i >= body.length) break;
+    // parse field name
+    const nameMatch = body.slice(i).match(/^([a-zA-Z0-9_:-]+)\s*=/);
+    if (!nameMatch) break;
+    const fname = nameMatch[1].toLowerCase();
+    i += nameMatch[0].length;
+    // parse value
+    while (i < body.length && /\s/.test(body[i])) i++;
+    if (body[i] === '{' || body[i] === '"') {
+      const openChar = body[i];
+      let j = i+1, depth = (openChar === '{' ? 1 : 0), inString = (openChar === '"'), esc = false;
+      if (openChar === '{') {
+        while (j < body.length) {
+          const ch = body[j];
+          if (ch === '{') depth++;
+          else if (ch === '}') { depth--; if (depth === 0) { j++; break; } }
+          j++;
+        }
+      } else {
+        // double-quoted string
+        while (j < body.length) {
+          const ch = body[j];
+          if (ch === '"' && !esc) { j++; break; }
+          esc = (ch === '\\' && !esc);
+          j++;
+        }
+      }
+      const raw = body.slice(i, j).trim();
+      // strip outer braces or quotes
+      let value = raw;
+      if ((value.startsWith('{') && value.endsWith('}')) || (value.startsWith('"') && value.endsWith('"'))) {
+        value = value.slice(1, -1);
+      }
+      fields[fname] = value.replace(/\s+/g, ' ').trim();
+      i = j;
+      // skip trailing comma — will be skipped at loop start
+    } else {
+      // bare token until comma
+      const j = body.indexOf(',', i);
+      const piece = (j === -1) ? body.slice(i).trim() : body.slice(i, j).trim();
+      fields[fname] = piece;
+      i = (j === -1) ? body.length : j+1;
+    }
+  }
+
+  return { type, key, fields };
+}
+
+/* ---------- Utilities & rendering ---------- */
+
+function formatAuthors(auth) {
+  if (!auth) return '';
+  // naive split on " and " — works for common BibTeX author lists
+  return auth.split(/\s+and\s+/i).map(s => s.trim()).join(', ');
+}
+
+function citationLabel(entry) {
+  return entry.fields && (entry.fields.title ? entry.fields.title : entry.key);
+}
+
+function renderEntries(entries) {
+  const container = document.getElementById('content');
+  container.innerHTML = '';
+  if (!entries.length) {
+    container.innerHTML = '<div class="small">No entries found in refs.bib</div>';
+    return;
+  }
+
+  // group by year (use 'year' then 'date' fields)
+  const byYear = {};
+  entries.forEach(e => {
+    const f = e.fields || {};
+    const year = f.year || (f.date ? (new Date(f.date)).getFullYear() : 'Unknown');
+    const ykey = year || 'Unknown';
+    if (!byYear[ykey]) byYear[ykey] = [];
+    byYear[ykey].push(e);
+  });
+
+  // sort years
+  const sortSelect = document.getElementById('sort');
+  const sortMode = sortSelect.value;
+  let years = Object.keys(byYear).sort((a,b) => {
+    if (a === 'Unknown') return 1;
+    if (b === 'Unknown') return -1;
+    return Number(a) - Number(b);
+  });
+  if (sortMode === 'year_desc') years = years.reverse();
+
+  years.forEach(year => {
+    const group = document.createElement('section');
+    group.className = 'year';
+    group.innerHTML = `<h2>${year}</h2><div class="small">${byYear[year].length} item(s)</div>`;
+    container.appendChild(group);
+
+    // sort entries inside year
+    let items = byYear[year].slice();
+    if (sortMode === 'title_asc') items.sort((a,b)=> ( (a.fields.title||'').localeCompare(b.fields.title||'') ));
+    else if (sortMode === 'year_asc' || sortMode === 'year_desc') {
+      // keep natural order (or reverse done above)
+    }
+
+    items.forEach(entry => {
+      const el = document.createElement('div');
+      el.className = 'entry';
+      const title = entry.fields.title || '(no title)';
+      const authors = formatAuthors(entry.fields.author || entry.fields.editor || '');
+      const venue = entry.fields.journal || entry.fields.booktitle || entry.fields.publisher || '';
+      const pages = entry.fields.pages ? `, ${entry.fields.pages}` : '';
+      const doi = entry.fields.doi ? entry.fields.doi : null;
+      const url = entry.fields.url ? entry.fields.url : (doi ? `https://doi.org/${doi}` : null);
+
+      const metaParts = [];
+      if (authors) metaParts.push(authors);
+      if (venue) metaParts.push(venue + (entry.fields.volume ? `, vol. ${entry.fields.volume}` : ''));
+      if (entry.fields.year) metaParts.push(entry.fields.year);
+      const meta = metaParts.join(' · ');
+
+      el.innerHTML = `
+        <div class="title">${title}</div>
+        <div class="meta">${meta}</div>
+        <div class="small">${entry.fields.abstract ? entry.fields.abstract.slice(0,320) + (entry.fields.abstract.length>320?'…':'') : ''}</div>
+        <div class="actions" style="margin-top:8px">
+          ${url ? `<a class="link" href="${escapeHtml(url)}" target="_blank" rel="noopener">Open</a>` : ''}
+          ${doi ? `<a class="link" href="https://doi.org/${escapeHtml(doi)}" target="_blank" rel="noopener">DOI</a>` : ''}
+          <button class="link copy" data-key="${escapeHtml(entry.key)}">Copy BibTeX</button>
+          <button class="link cite" data-key="${escapeHtml(entry.key)}">Show citation</button>
+        </div>
+      `;
+
+      // attach events after insertion
+      container.appendChild(el);
+    });
+  });
+
+  // attach copy handlers
+  Array.from(document.querySelectorAll('.copy')).forEach(btn=>{
+    btn.addEventListener('click', async e=>{
+      const key = btn.getAttribute('data-key');
+      const entry = entries.find(x=>x.key === key);
+      if (!entry) return;
+      const text = buildBibtexString(entry);
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.textContent = 'Copied ✓';
+        setTimeout(()=> btn.textContent = 'Copy BibTeX', 1500);
+      } catch(err){
+        alert('Copy failed — here is the BibTeX:\\n\\n' + text);
+      }
+    });
+  });
+
+  Array.from(document.querySelectorAll('.cite')).forEach(btn=>{
+    btn.addEventListener('click', e=>{
+      const key = btn.getAttribute('data-key');
+      const entry = entries.find(x=>x.key === key);
+      if (!entry) return;
+      alert(buildHumanCitation(entry));
+    });
+  });
+}
+
+function buildBibtexString(entry) {
+  const fields = entry.fields || {};
+  const lines = [];
+  for (const k of Object.keys(fields)) {
+    lines.push(`  ${k} = {${fields[k].replace(/}/g,'\\}')}}`);
+  }
+  // safer reconstruction: join fields without final trailing bracket problem
+  let body = '';
+  const keys = Object.keys(fields);
+  body = keys.map(k => `  ${k} = {${fields[k]}}`).join(',\\n');
+  return `@${entry.type}{${entry.key},\\n${body}\\n}`;
+}
+
+function buildHumanCitation(entry) {
+  const t = entry.fields.title || '';
+  const a = formatAuthors(entry.fields.author || '');
+  const y = entry.fields.year || '';
+  const v = entry.fields.journal || entry.fields.booktitle || '';
+  return `${a} (${y}). ${t}. ${v}`;
+}
+
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ---------- App initialization ---------- */
+
+let parsedEntries = [];
+
+async function loadBib() {
+  document.getElementById('loading').style.display = 'block';
+  try {
+    const resp = await fetch('refs.bib', {cache:'no-store'});
+    if (!resp.ok) throw new Error('Failed to fetch refs.bib (HTTP ' + resp.status + ')');
+    const text = await resp.text();
+    // remove comments starting with % on a line
+    const cleaned = text.replace(/(^|\\n)\\s*%.*(\\n|$)/g, '\\n');
+    const rawEntries = extractBibEntries(cleaned);
+    parsedEntries = rawEntries.map(r => parseEntry(r)).filter(Boolean);
+
+    // friendly default sort: by year desc
+    document.getElementById('loading').style.display = 'none';
+    applyFiltersAndRender();
+  } catch (err) {
+    document.getElementById('content').innerHTML = `<div class="small">Error loading refs.bib — ${err.message}</div>`;
+    console.error(err);
+  }
+}
+
+function applyFiltersAndRender() {
+  const q = (document.getElementById('search').value || '').toLowerCase().trim();
+  let results = parsedEntries.slice();
+
+  if (q) {
+    results = results.filter(e=>{
+      const f = e.fields || {};
+      return ((f.title||'') + ' ' + (f.author||'') + ' ' + (f.journal||'') + ' ' + (f.booktitle||'') + ' ' + (f.abstract||'')).toLowerCase().includes(q);
+    });
+  }
+  // for grouping/render we want a clone sorted by year desc by default
+  // convert year strings to numbers where possible
+  results.sort((a,b)=>{
+    const ay = parseInt(a.fields.year) || 0;
+    const by = parseInt(b.fields.year) || 0;
+    // default: year desc
+    return by - ay || ((a.fields.title||'').localeCompare(b.fields.title||''));
+  });
+
+  renderEntries(results);
+}
+
+document.getElementById('search').addEventListener('input', ()=>{
+  applyFiltersAndRender();
+});
+document.getElementById('sort').addEventListener('change', ()=> applyFiltersAndRender());
+document.getElementById('refresh').addEventListener('click', ()=> loadBib());
+
+/* bootstrap */
+loadBib();
+
+</script>
+</body>
+</html>
